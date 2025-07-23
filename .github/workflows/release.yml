@@ -66,12 +66,6 @@ jobs:
         
         ### API Server Configuration:
         The API server URL can be configured by editing the `API_SERVER` variable at the top of `start.bat`.
-        
-        ### What's Changed:
-        - Complete SQLite to API migration
-        - URL encoding support for game names with spaces and special characters
-        - Centralized server configuration
-        - Improved error handling and pagination
         EOF
         
     - name: Create Release and Upload Asset
