@@ -3,6 +3,9 @@ setlocal EnableDelayedExpansion
 title Sploder Timecapsule
 cd assets
 
+:: Server configuration
+set "API_SERVER=https://sploder.us.to/timecapsule/api.php"
+
 :: Initialize the current page and games per page
 set /a games_per_page=15
 
@@ -31,11 +34,21 @@ set /p "gamename=Enter Game Name: "
 
 if "%gamename%"=="0" goto searchtypeselect
 
-for /f "tokens=1" %%G in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT 1 FROM games WHERE game_name LIKE '%gamename%%%' COLLATE NOCASE LIMIT 1;"') do (
-    set /a game_count=%%G
+:: Use a temporary variable with delayed expansion
+set "rawname=%gamename%"
+
+:: PowerShell to URL-encode, with correct quoting
+for /f "delims=" %%A in ('powershell -NoProfile -Command "[uri]::EscapeDataString(\"!rawname!\")"') do (
+    set "encoded_name=%%A"
 )
 
-if %game_count%==0 (
+:: Use the encoded name in the URL
+set "url=%API_SERVER%?type=check_gamename_exists&gamename=%encoded_name%"
+
+:: Curl request
+for /f "delims=" %%G in ('curl -s "%url%"') do set "game_count=%%G"
+
+if "%game_count%"=="0" (
     goto nogamesgamename
 )
 
@@ -47,7 +60,7 @@ echo Too slow? Enter a longer name to narrow down the search.
 set "found_game_types=0"
 set "counter=0"
 
-for /f "delims=" %%T in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT game_type FROM (SELECT DISTINCT game_type FROM games WHERE game_name LIKE '%gamename%%%' COLLATE NOCASE ORDER BY game_id DESC LIMIT 5) ORDER BY game_type;"') do (
+for /f "delims=" %%T in ('curl -s "%API_SERVER%?type=get_gametypes_by_gamename&gamename=%encoded_name%"') do (
     set /a counter+=1
     if "!counter!"=="1" (
         cls
@@ -97,7 +110,7 @@ cls
 set /a offset=(%current_page%-1)*%games_per_page
 
 :: Get total number of games to calculate total pages
-for /f "tokens=1" %%G in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT count(*) FROM games WHERE game_name LIKE '%gamename%%%' COLLATE NOCASE AND game_type='%type%';"') do (
+for /f "tokens=1" %%G in ('curl -s "%API_SERVER%?type=count_games_by_gamename_type&gamename=%encoded_name%&game_type=%type%"') do (
     set /a total_games=%%G
 )
 
@@ -111,7 +124,7 @@ echo Game ID   Game Name                        Author              Created    P
 echo -------------------------------------------------------------------------------------------------------------------
 
 :: Query and process the output for the current page
-for /f "tokens=1,2,3,4,5,6,7,8* delims=|" %%A in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT game_id, game_name, username, creation_date, first_publish_date, total_views, vote_average, private FROM games WHERE game_name LIKE '%gamename%%%' COLLATE NOCASE AND game_type='%type%' ORDER BY total_views DESC LIMIT %games_per_page% OFFSET %offset%;"') do (
+for /f "tokens=1,2,3,4,5,6,7,8* delims=|" %%A in ('curl -s "%API_SERVER%?type=get_games_by_gamename_type&gamename=%encoded_name%&game_type=%type%&games_per_page=%games_per_page%&offset=%offset%"') do (
     set "id=%%A"
     set "name=%%B"
     set "author=%%C"
@@ -173,7 +186,7 @@ for /l %%i in (0,1,255) do (
 :done
 set "username=%lowercase%"
 :: Check if the username has any games
-for /f "tokens=1" %%G in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT COUNT(game_id) FROM games WHERE username='%username%' LIMIT 1;"') do (
+for /f "tokens=1" %%G in ('curl -s "%API_SERVER%?type=count_games_by_username&username=%username%"') do (
     set /a game_count=%%G
 )
 
@@ -195,7 +208,7 @@ for %%A in (1 2 3 4 5 6 7 8 9) do set "type_option%%A="
 echo Available game types for %username%:
 echo ------------------------------------------------------------------------------------------------------------------
 :: Loop through the game types and assign sequential numbers
-for /f "delims=" %%T in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT DISTINCT game_type FROM games WHERE username='%username%' ORDER BY game_type;"') do (
+for /f "delims=" %%T in ('curl -s "%API_SERVER%?type=get_gametypes_by_username&username=%username%"') do (
     set /a counter+=1
     set "type_option!counter!=%%T"
 
@@ -256,7 +269,7 @@ cls
 set /a offset=(%current_page%-1)*%games_per_page%
 
 :: Get total number of games to calculate total pages
-for /f "tokens=1" %%G in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT count(*) FROM games WHERE username='%username%' AND game_type='%type%';"') do (
+for /f "tokens=1" %%G in ('curl -s "%API_SERVER%?type=count_games_by_username_type&username=%username%&game_type=%type%"') do (
     set /a total_games=%%G
 )
 
@@ -270,7 +283,7 @@ echo  Game ID  Game Name                              Created      Published  La
 echo -----------------------------------------------------------------------------------------------------------------
 
 :: Query and process the output for the current page
-for /f "tokens=1,2,3,4,5,6,7* delims=|" %%A in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT game_id, game_name, creation_date, first_publish_date, last_edit_date, total_views, vote_average, private FROM games WHERE username='%username%' AND game_type='%type%' ORDER BY creation_date DESC LIMIT %games_per_page% OFFSET %offset%;"') do (
+for /f "tokens=1,2,3,4,5,6,7* delims=|" %%A in ('curl -s "%API_SERVER%?type=get_games_by_username_type&username=%username%&game_type=%type%&games_per_page=%games_per_page%&offset=%offset%"') do (
     set "id=%%A"
     set "name=%%B"
     set "created=%%C"
@@ -310,7 +323,7 @@ goto bottombar
 cls
 
 :: Get published game date first_publish_date
-for /f "delims=" %%D in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT first_publish_date FROM games WHERE game_id='%input%';"') do (
+for /f "delims=" %%D in ('curl -s "%API_SERVER%?type=get_publish_date&game_id=%input%"') do (
     set "publish_date_temp=%%D"
 )
 
@@ -345,10 +358,10 @@ if "!playtype!"=="1" (
 cls
 
 :: Default: if a game ID is entered, process it
-htdocs\sqlite3.exe htdocs\sploder.db "SELECT %playtype%_data FROM games WHERE game_id='%input%'" > htdocs\game.xml
+curl -s "%API_SERVER%?type=get_game_data&game_id=%input%&playtype=%playtype%" > htdocs\game.xml
 
 :: Fetch difficulty and rating for the selected game
-for /f "tokens=1,2,3,4 delims=|" %%D in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT CASE WHEN ROUND(difficulty * 10) > 10 THEN ROUND(ROUND(difficulty * 10) / 10) ELSE ROUND(difficulty * 10) END, ROUND(vote_average), game_type, username FROM games WHERE game_id='%input%';"') do (
+for /f "tokens=1,2,3,4 delims=|" %%D in ('curl -s "%API_SERVER%?type=get_game_details&game_id=%input%"') do (
     set "difficulty=%%D"
     set "rating=%%E"
     set "gametype=%%F"
@@ -363,7 +376,7 @@ echo ^&username=!author!^&difficulty=!difficulty!^&rating=!rating! > htdocs\php\
 
 :: Remove newlines when saving leaderboard
 (
-    for /f "delims=" %%A in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT leaderboard FROM games WHERE game_id='%input%'"') do (
+    for /f "delims=" %%A in ('curl -s "%API_SERVER%?type=get_leaderboard&game_id=%input%"') do (
         set /p result=%%A<nul
     )
 ) > htdocs\php\getleaderboard-shooter.html
@@ -385,7 +398,7 @@ set "id=%input:~0,-5%"
 
 :: Capture the description output
 set "description="
-for /f "delims=" %%D in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT game_description FROM games WHERE game_id='%id%';"') do (
+for /f "delims=" %%D in ('curl -s "%API_SERVER%?type=get_game_description&game_id=%id%"') do (
     set "description=%%D"
 )
 
@@ -405,7 +418,7 @@ cls
 set "id=%input:~0,-5%"
 
 set "tags="
-for /f "delims=" %%T in ('htdocs\sqlite3.exe -batch -noheader htdocs\sploder.db "SELECT game_tags FROM games WHERE game_id='%id%';"') do (
+for /f "delims=" %%T in ('curl -s "%API_SERVER%?type=get_game_tags&game_id=%id%"') do (
     set "tags=%%T"
 )
 
